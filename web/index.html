@@ -172,6 +172,14 @@
 
     <section id="panel-cluster" class="panel" role="tabpanel" aria-labelledby="tab-cluster" hidden>
       <div class="section-heading"><h1>Cluster</h1><button class="button quiet" id="refresh-cluster">Refresh status</button></div>
+      <section class="surface lifecycle-control" aria-labelledby="lifecycle-title">
+        <div class="surface-title"><h2 id="lifecycle-title">GLM inference</h2><span class="badge neutral" id="lifecycle-state">UNKNOWN</span></div>
+        <p class="small muted" id="lifecycle-detail">Connect to inspect model residency.</p>
+        <div class="button-row lifecycle-actions"><button class="button primary" id="lifecycle-on" type="button" disabled>Turn GLM on</button><button class="button danger" id="lifecycle-off" type="button" disabled>Turn GLM off</button></div>
+        <dl class="lifecycle-meta"><dt>Cluster owner</dt><dd id="lifecycle-owner">—</dd><dt>Coordinator</dt><dd id="lifecycle-coordinator">—</dd><dt>Readiness</dt><dd id="lifecycle-readiness">—</dd><dt>OFF drain deadline</dt><dd id="lifecycle-drain">—</dd></dl>
+        <div id="lifecycle-nodes" class="lifecycle-nodes"><p class="small muted">No lifecycle node state received.</p></div>
+        <p class="small muted lifecycle-note">ON/OFF controls the whole GLM pair. The frontend remains available while inference is OFF. UNKNOWN is never treated as OFF.</p>
+      </section>
       <div class="cluster-overview surface"><div><h2 id="cluster-model">Model not detected</h2><p id="cluster-runtime" class="small muted">Runtime details unavailable.</p></div><span class="badge neutral" id="cluster-health">UNKNOWN</span></div>
       <div id="cluster-nodes" class="cluster-nodes"><div class="surface missing-state">Node telemetry not received.</div></div>
       <div class="cluster-metrics"><div class="surface metric-card"><span>Acceptance DFlash</span><strong id="cluster-acceptance">—</strong><small>Last available measurement</small></div><div class="surface metric-card"><span>Active request</span><strong id="cluster-active">—</strong><small>Server-reported state</small></div><div class="surface metric-card"><span>Runtime limit</span><strong id="cluster-context">—</strong><small>Not a quality qualification at this context length</small></div><div class="surface metric-card"><span>Last update</span><strong id="cluster-updated">—</strong><small id="cluster-check-note">No response received</small></div></div>

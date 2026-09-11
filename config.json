@@ -62,5 +62,8 @@
   "sandbox_timeout": 90,
   "sandbox_memory_bytes": 1073741824,
   "sandbox_tasks": 64,
-  "remote_ssh": "02-evo-x3-tb"
+  "remote_ssh": "02-evo-x3-tb",
+  "cluster_config_path": "/home/funboy/StrixHaloClusterGLM/runtime/cluster.json",
+  "cluster_shared_state_dir": "/home/funboy/.local/state/strix-cluster",
+  "lifecycle_drain_seconds": 30
 }

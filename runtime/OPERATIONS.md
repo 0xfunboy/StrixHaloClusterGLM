@@ -16,21 +16,38 @@ The numerical preset remains W4, TP2/PP1, DFlash2 k5/local0, Socket over USB4,
 prefix cache off, 64K engine profile. All five correctness fixes and the
 operational JIT caches remain installed. No model download is required.
 
-## Start, stop and restart
+## Gateway and model ON/OFF
 
-Run on NODE01 as `funboy`:
+`strixglm.service` is the always-on frontend/control plane. The GLM engine and
+paired coordinator are deliberately disabled from automatic startup. Normal ON/OFF
+uses the authenticated lifecycle API or the Cluster panel; opening the UI does
+not load inference.
 
 ```bash
+# Gateway only; safe while GLM is OFF.
 systemctl --user start strixglm.service
-systemctl --user restart haloclu-engine.service
-systemctl --user stop haloclu-engine.service
+
+# Read current lifecycle state with the existing local Bearer token.
+TOKEN=$(cat /home/funboy/StrixHaloClusterGLM/state/api-token)
+curl -sS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18093/v1/model/lifecycle
+
+# Asynchronous whole-pair ON/OFF. Do not replay POST after an ambiguous response;
+# inspect GET state instead.
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18093/v1/model/lifecycle/on
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18093/v1/model/lifecycle/off
 ```
 
-The dependency order drains the gateway and coordinator before stopping the
-entire owned pair. Start/restart manages both ranks; never restart an individual
-rank. Startup waits up to five minutes for the USB4 peer; model loading also has
-a bounded deadline. A foreign/replaced unit fails ownership validation instead
-of being taken over. Failed inference requests are not automatically replayed.
+States are `OFF`, `STARTING`, `READY`, `STOPPING`, `ERROR`. `UNKNOWN` node state
+is represented as ERROR and never promoted to OFF. ON validates cross-model
+ownership, loads both ranks through the existing controller, starts the paired
+coordinator and runs a one-token readiness inference before READY. OFF blocks new
+model admission, drains the coordinator for the configured 30-second deadline,
+then stops/verifies both owned rank cgroups. A stale or replaced InvocationID is
+not taken over. GLM and DS41 share a persistent cluster owner receipt, so a rank0
+crash cannot silently permit the other model to start while a remote peer may
+remain alive.
+
+For diagnostics only:
 
 ```bash
 systemctl --user status haloclu-engine.service strixglm-pair.service strixglm.service
@@ -38,6 +55,9 @@ cd /home/funboy/StrixHaloClusterGLM
 ./bin/strixglm cluster status
 journalctl --user -u haloclu-engine.service -u strixglm-pair.service -u strixglm.service -n 100
 ```
+
+Never restart an individual rank. Direct `cluster start/stop` remains a low-level
+controller interface and does not manage the gateway/coordinator lifecycle.
 
 Rank logs and current ownership are under `state/cluster`. Each boot uses fresh
 unit identities. Old snapshots are historical, not live ownership. To revert a

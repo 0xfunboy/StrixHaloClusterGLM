@@ -40,6 +40,7 @@ type App struct {
 	preferred     atomic.Value
 	closing       atomic.Bool
 	attachmentMu  sync.Mutex
+	lifecycle     *modelLifecycle
 }
 
 func newApp(c Config) (*App, error) {
@@ -64,6 +65,11 @@ func newApp(c Config) (*App, error) {
 	}
 	a := &App{cfg: c, client: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 30 * time.Second}}, tasks: map[string]*Task{}, admission: make(chan struct{}, 1), token: strings.TrimSpace(string(b)), journal: Journal{Path: filepath.Join(c.StateDir, "events.jsonl")}}
 	a.publicURL = publicURL
+	lifecycle, e := newModelLifecycle(c)
+	if e != nil {
+		return nil, fmt.Errorf("model lifecycle: %w", e)
+	}
+	a.lifecycle = lifecycle
 	a.preferred.Store(c.DefaultProfile)
 	if e := a.loadAPISettings(); e != nil {
 		return nil, e
@@ -132,6 +138,7 @@ func (a *App) health(ctx context.Context) map[string]any {
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	a.registerBrowserAuthRoutes(mux)
+	a.registerLifecycleRoutes(mux)
 	a.registerWorkspaceRoutes(mux)
 	reason := ""
 	if !a.cfg.ToolCalls {
@@ -148,6 +155,13 @@ func (a *App) routes() http.Handler {
 	mux.Handle("/", publicWebHandler(a.publicURL))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		h := a.health(r.Context())
+		if a.lifecycle != nil {
+			// Gateway health is independent from model residency. The engine
+			// health is nested so OFF/STARTING never makes the control plane
+			// disappear or trigger an implicit model load.
+			jsonReply(w, 200, map[string]any{"status": "ok", "gateway": "ok", "engine": h})
+			return
+		}
 		code := 200
 		if h["status"] != "ok" {
 			code = 503
@@ -168,7 +182,11 @@ func (a *App) routes() http.Handler {
 			}
 		}
 		a.mu.Unlock()
-		jsonReply(w, 200, map[string]any{"model": a.cfg.Model, "profile": a.preferred.Load(), "profiles": a.cfg.Profiles, "profile_status": a.cfg.ProfileStatus, "active_request": active, "health": a.health(r.Context()), "metrics": m, "acceptance": m.Acceptance, "context_limit": a.cfg.MaxContextTokens, "nodes": a.nodeStats(r.Context())})
+		status := map[string]any{"model": a.cfg.Model, "profile": a.preferred.Load(), "profiles": a.cfg.Profiles, "profile_status": a.cfg.ProfileStatus, "active_request": active, "health": a.health(r.Context()), "metrics": m, "acceptance": m.Acceptance, "context_limit": a.cfg.MaxContextTokens, "nodes": a.nodeStats(r.Context())}
+		if a.lifecycle != nil {
+			status["lifecycle"] = a.lifecycle.Snapshot(r.Context())
+		}
+		jsonReply(w, 200, status)
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authorized(w, r) {
@@ -332,6 +350,10 @@ func (a *App) proxyChat(w http.ResponseWriter, r *http.Request) {
 // The private Unix Pi bridge has a scoped session capability, not the admin
 // credential. Once admitted it must survive unrelated API-token rotation.
 func (a *App) proxyAuthorizedChat(w http.ResponseWriter, r *http.Request) {
+	if a.lifecycle != nil && !a.lifecycle.ready() {
+		jsonReply(w, 503, map[string]string{"error": "GLM inference is not READY; use the model lifecycle control", "code": "model_off"})
+		return
+	}
 	started := time.Now()
 	var p map[string]any
 	if e := decodeBody(w, r, &p); e != nil {

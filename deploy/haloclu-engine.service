@@ -12,6 +12,3 @@ TimeoutStartSec=1800
 TimeoutStopSec=1900
 UMask=0077
 Restart=no
-
-[Install]
-WantedBy=default.target

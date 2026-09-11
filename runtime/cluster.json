@@ -8,5 +8,6 @@
  "master_port": 29643,
  "frontend_listen": "127.0.0.1:18094",
  "legacy_owner": "/home/funboy/StrixHaloClusterGLM/.engine/state/pair-owner.json",
- "load_timeout_seconds": 1200
+ "load_timeout_seconds": 1200,
+ "shared_state_dir": "/home/funboy/.local/state/strix-cluster"
 }

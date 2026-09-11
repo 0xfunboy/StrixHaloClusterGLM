@@ -232,6 +232,27 @@ export function activeRequestLabel(value, busy) {
   return '—';
 }
 
+export function lifecycleControlState(value, busy = false) {
+  const state = String(value?.state || 'ERROR').toUpperCase();
+  const owner = String(value?.cluster_owner || 'UNKNOWN').toUpperCase();
+  const coordinator = String(value?.coordinator || 'OFF').toUpperCase();
+  const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
+  const active = coordinator === 'RUNNING' || nodes.some(node => String(node?.engine_state || '').toUpperCase() === 'ACTIVE');
+  const transitional = state === 'STARTING' || state === 'STOPPING';
+  return {
+    state,
+    owner,
+    coordinator,
+    readiness: String(value?.readiness || 'NOT_READY'),
+    detail: String(value?.detail || value?.last_error || ''),
+    drainSeconds: finite(value?.drain_deadline_seconds),
+    nodes,
+    poll: transitional,
+    onDisabled: Boolean(busy || transitional || state === 'READY' || value?.start_allowed !== true),
+    offDisabled: Boolean(busy || transitional || !active),
+  };
+}
+
 export function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',

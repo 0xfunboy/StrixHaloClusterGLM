@@ -1,6 +1,6 @@
 import {
   SSEParser, activeRequestLabel, bytes, canCancelTask, canRunWorkspaceShell, classifyStatus, completionDelta, completionState, decodeRate, draftStats, liveDecodeRate,
-  apiSettings, displayPreferences, errorMessage, finite, generationPanelState, generationSettings, healthStatus, importedTaskSpec, isSuccess, isTerminal, normalizeTask, number,
+  apiSettings, displayPreferences, errorMessage, finite, generationPanelState, generationSettings, healthStatus, importedTaskSpec, isSuccess, isTerminal, lifecycleControlState, normalizeTask, number,
   IT_LABELS, markdownBlocks, markdownInline, observedRate, pathList, percent, safeSourceURL, seconds,
 } from './ui-core.mjs';
 import { initDownloads } from './downloads.mjs';
@@ -14,6 +14,7 @@ const state = {
   importedOptions: {}, conversations: [], conversationID: '', conversation: null, conversationTimer: null, catalog: null, catalogSequence: 0, actions: [], jobs: [], jobTimer: null, operationSubmitting: false,
   language: 'en', records: [], attachments: [], uploading: 0, workspaceOptions: null, workspaceSessions: [], workspace: null, workspaceTimer: null, workspaceSequence: 0, workspaceEvents: [], workspaceBusy: false,
   preferences: displayPreferences(), activeTab: 'chat', settings: null, settingsBusy: false,
+  lifecycleBusy: false, lifecycleTimer: null,
 };
 
 const staticLabels = [];
@@ -327,7 +328,55 @@ function nodeCard(node, index) {
   return card;
 }
 
+function renderLifecycle(value) {
+  const view = lifecycleControlState(value, state.lifecycleBusy);
+  setBadge($('lifecycle-state'), view.state);
+  $('lifecycle-detail').textContent = view.detail || (view.state === 'OFF' ? 'GLM inference is unloaded.' : 'Lifecycle status reported by the server.');
+  $('lifecycle-owner').textContent = view.owner;
+  $('lifecycle-coordinator').textContent = view.coordinator;
+  $('lifecycle-readiness').textContent = view.readiness;
+  $('lifecycle-drain').textContent = view.drainSeconds === null ? '—' : `${number(view.drainSeconds, 0)} s`;
+  $('lifecycle-on').disabled = view.onDisabled;
+  $('lifecycle-off').disabled = view.offDisabled;
+  const nodes = view.nodes.map(node => {
+    const card = element('div', 'lifecycle-node');
+    card.append(element('strong', '', `${node.host || `rank${node.rank ?? '?'}`} · ${node.engine_state || 'UNKNOWN'}`));
+    const details = [];
+    if (node.engine_pid) details.push(`pid ${node.engine_pid}`);
+    if (node.mem_available_bytes !== undefined) details.push(`available ${bytes(node.mem_available_bytes)}`);
+    if (node.swap_free_bytes !== undefined) details.push(`swap free ${bytes(node.swap_free_bytes)}`);
+    if (node.error) details.push(`error: ${node.error}`);
+    card.append(document.createTextNode(details.join(' · ') || 'No node details.'));
+    return card;
+  });
+  $('lifecycle-nodes').replaceChildren(...(nodes.length ? nodes : [element('p', 'small muted', 'No lifecycle node state received.')]))
+  clearTimeout(state.lifecycleTimer);
+  state.lifecycleTimer = null;
+  if (view.poll && state.authenticated && !document.hidden) {
+    state.lifecycleTimer = setTimeout(() => refreshHealth(false), 2000);
+  }
+}
+
+async function lifecycleAction(action) {
+  if (state.lifecycleBusy) return;
+  state.lifecycleBusy = true;
+  $('lifecycle-on').disabled = true;
+  $('lifecycle-off').disabled = true;
+  try {
+    const snapshot = await request(`/v1/model/lifecycle/${action}`, { method: 'POST', timeout: 15000 });
+    renderLifecycle(snapshot);
+    notice(action === 'on' ? 'GLM start accepted. Status will update from the server.' : 'GLM stop accepted. New inference is blocked while the pair drains.', 'neutral');
+    await refreshHealth(false);
+  } catch (error) {
+    notice(error.message, 'bad');
+  } finally {
+    state.lifecycleBusy = false;
+    if (state.authenticated) refreshHealth(false);
+  }
+}
+
 function renderHealth(health, status) {
+  renderLifecycle(status?.lifecycle || null);
   const healthState = healthStatus(status?.health, healthStatus(health));
   setBadge($('cluster-health'), healthState);
   $('cluster-model').textContent = status?.model || state.model || 'Model not reported';
@@ -364,10 +413,17 @@ async function refreshHealth(interactive = false) {
     state.model = status?.model || models?.data?.[0]?.id || '';
     renderHealth(health, status);
     const healthState = healthStatus(status?.health, healthStatus(health));
-    const bad = classifyStatus(healthState) === 'bad';
-    $('connection-label').textContent = bad ? "Engine needs attention" : "Local API connected";
+    const lifecycle = lifecycleControlState(status?.lifecycle || null);
+    const expectedOffline = ['OFF', 'STARTING', 'STOPPING'].includes(lifecycle.state);
+    const bad = lifecycle.state === 'ERROR' || (!expectedOffline && classifyStatus(healthState) === 'bad');
+    $('connection-label').textContent = lifecycle.state === 'OFF' ? "Local API connected · GLM OFF"
+      : lifecycle.state === 'STARTING' ? "Local API connected · GLM STARTING"
+      : lifecycle.state === 'STOPPING' ? "Local API connected · GLM STOPPING"
+      : bad ? "Engine needs attention" : "Local API connected";
     $('connection-dot').className = `status-dot ${bad ? 'bad' : 'good'}`;
-    $('connection-result').textContent = bad ? "API reachable; check cluster health before generating." : "Authenticated: chat and workspace controls are available.";
+    $('connection-result').textContent = lifecycle.state === 'OFF' ? "Authenticated. The frontend is available and GLM inference is unloaded."
+      : bad ? "API reachable; check cluster lifecycle before generating."
+      : "Authenticated: chat and workspace controls are available.";
     if (restoredAuthentication && state.activeTab === 'models') refreshModels();
     if (interactive) notice(bad ? 'The API is reachable, but the engine reports an unhealthy state.' : '', bad ? 'bad' : 'neutral');
   } catch (error) {
@@ -1340,6 +1396,8 @@ $('forget-token').addEventListener('click', async () => {
 });
 $('refresh-health').addEventListener('click', () => refreshHealth(true));
 $('refresh-cluster').addEventListener('click', () => refreshHealth(true));
+$('lifecycle-on').addEventListener('click', () => lifecycleAction('on'));
+$('lifecycle-off').addEventListener('click', () => lifecycleAction('off'));
 $('chat-form').addEventListener('submit', sendChat);
 $('chat-input').addEventListener('keydown', event => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('chat-form').requestSubmit(); }

@@ -147,6 +147,9 @@ func consumeSSEProgress(r io.Reader, start time.Time, emit func([]byte), result 
 	return nil
 }
 func (a *App) modelLock(ctx context.Context) (func(), error) {
+	if a.lifecycle != nil && !a.lifecycle.ready() {
+		return nil, errors.New("GLM inference is not READY; use the model lifecycle control")
+	}
 	select {
 	case a.admission <- struct{}{}:
 	case <-ctx.Done():

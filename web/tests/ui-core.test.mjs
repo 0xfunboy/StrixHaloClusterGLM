@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   SSEParser, activeRequestLabel, bytes, canCancelTask, canRunWorkspaceShell, classifyStatus, commandText, completionDelta, completionState, decodeRate, draftStats, liveDecodeRate,
-  errorMessage, escapeHTML, finite, generationSettings, healthStatus, importedTaskSpec, isSuccess, isTerminal, normalizeTask,
+  errorMessage, escapeHTML, finite, generationSettings, healthStatus, importedTaskSpec, isSuccess, isTerminal, lifecycleControlState, normalizeTask,
   IT_LABELS, markdownBlocks, markdownInline, number, observedRate, pathList, percent, safeSourceURL, seconds, textBlocks,
 } from '../ui-core.mjs';
 
@@ -94,6 +94,31 @@ test('Live Go health objects and active task arrays are rendered semantically', 
   assert.equal(activeRequestLabel([], true), 'Active');
   assert.equal(activeRequestLabel(['task1', 'task2'], true), 'task1 · task2');
   assert.equal(activeRequestLabel(undefined, undefined), '—');
+});
+
+test('Lifecycle controls are fail-closed and recover from server state', () => {
+  let view = lifecycleControlState({state:'OFF',cluster_owner:'NONE',start_allowed:true,coordinator:'OFF',nodes:[{engine_state:'OFF_VERIFIED'},{engine_state:'OFF_VERIFIED'}]}, false);
+  assert.equal(view.onDisabled, false);
+  assert.equal(view.offDisabled, true);
+  assert.equal(view.poll, false);
+
+  view = lifecycleControlState({state:'STARTING',cluster_owner:'GLM',start_allowed:false,coordinator:'OFF',nodes:[{engine_state:'ACTIVE'},{engine_state:'ACTIVE'}]}, false);
+  assert.equal(view.onDisabled, true);
+  assert.equal(view.offDisabled, true);
+  assert.equal(view.poll, true);
+
+  view = lifecycleControlState({state:'READY',cluster_owner:'GLM',start_allowed:false,coordinator:'RUNNING',nodes:[{engine_state:'ACTIVE'},{engine_state:'ACTIVE'}]}, false);
+  assert.equal(view.onDisabled, true);
+  assert.equal(view.offDisabled, false);
+
+  view = lifecycleControlState({state:'ERROR',cluster_owner:'UNKNOWN',start_allowed:false,coordinator:'OFF',nodes:[{engine_state:'OFF_VERIFIED'},{engine_state:'UNKNOWN'}]}, false);
+  assert.equal(view.onDisabled, true);
+  assert.equal(view.offDisabled, true);
+  assert.equal(view.owner, 'UNKNOWN');
+
+  view = lifecycleControlState({state:'OFF',cluster_owner:'DS41',start_allowed:false,coordinator:'OFF',nodes:[{engine_state:'OFF_VERIFIED'},{engine_state:'OFF_VERIFIED'}]}, false);
+  assert.equal(view.onDisabled, true);
+  assert.equal(view.offDisabled, true);
 });
 
 test('Live CIRU metrics calculate decode from measured generation time, not HTTP TPS', () => {

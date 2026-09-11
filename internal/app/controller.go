@@ -37,6 +37,7 @@ type ClusterConfig struct {
 	FrontendListen     string    `json:"frontend_listen"`
 	LegacyOwner        string    `json:"legacy_owner"`
 	LoadTimeoutSeconds int       `json:"load_timeout_seconds"`
+	SharedStateDir     string    `json:"shared_state_dir,omitempty"`
 }
 type OwnedUnit struct {
 	Rank         int    `json:"rank"`
@@ -88,6 +89,9 @@ func NewClusterController(cfg ClusterConfig) (*ClusterController, error) {
 	}
 	if cfg.MasterPort < 1024 || cfg.MasterPort > 65535 || cfg.LoadTimeoutSeconds < 1 || cfg.LoadTimeoutSeconds > 1800 {
 		return nil, errors.New("invalid controller limits")
+	}
+	if cfg.SharedStateDir != "" && (!filepath.IsAbs(cfg.SharedStateDir) || filepath.Clean(cfg.SharedStateDir) != cfg.SharedStateDir || cfg.SharedStateDir == "/") {
+		return nil, errors.New("shared_state_dir must be an absolute clean specific path")
 	}
 	for rank, raw := range cfg.RankURLs {
 		u, e := url.Parse(raw)
@@ -186,9 +190,18 @@ func withControllerLock(path string, fn func() error) error {
 	return fn()
 }
 func (c *ClusterController) locked(fn func() error) error {
-	return withControllerLock(filepath.Join(c.Config.StateDir, "pair.lock"), func() error {
-		return withControllerLock(filepath.Join(filepath.Dir(c.Config.LegacyOwner), "pair.lock"), fn)
-	})
+	lockedPair := func() error {
+		return withControllerLock(filepath.Join(c.Config.StateDir, "pair.lock"), func() error {
+			return withControllerLock(filepath.Join(filepath.Dir(c.Config.LegacyOwner), "pair.lock"), fn)
+		})
+	}
+	if c.Config.SharedStateDir == "" {
+		return lockedPair()
+	}
+	// Cross-model lifecycle mutations serialize on the same fixed control lock
+	// used by DS41. Model processes never hold this flock; persistent owner.json
+	// is what keeps a crash/unknown peer from becoming a false OFF state.
+	return withControllerLock(sharedComputeLockPath(c.Config.SharedStateDir), lockedPair)
 }
 func (c *ClusterController) ownerPath() string {
 	return filepath.Join(c.Config.StateDir, "pair-owner.json")
@@ -358,16 +371,42 @@ func (c *ClusterController) stop(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	sharedOwned := false
+	sharedValid := false
+	if c.Config.SharedStateDir != "" {
+		if r, se := readSharedCompute(c.Config.SharedStateDir); se == nil {
+			sharedOwned = r.Owner == "GLM"
+			if sharedOwned && sharedMatchesGLM(r, o) == nil {
+				sharedValid = true
+				_ = writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("STOPPING", o, "stopping both owned GLM ranks"))
+			}
+		}
+	}
 	if e = c.stopUnits(ctx, o.Units, false); e != nil {
 		o.State = "cleanup_uncertain"
 		o.Error = e.Error()
 		_ = c.save(&o)
+		if c.Config.SharedStateDir != "" && sharedOwned {
+			_ = writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("UNRECONCILED", o, "GLM stop failed or peer became unverifiable: "+e.Error()))
+		}
 		return e
 	}
 	o.State = "stopped"
 	o.Error = ""
 	if e = c.save(&o); e != nil {
 		return e
+	}
+	if c.Config.SharedStateDir != "" && sharedOwned {
+		if sharedValid {
+			if e = writeSharedCompute(c.Config.SharedStateDir, sharedOff("both GLM ranks verified stopped")); e != nil {
+				return e
+			}
+		} else {
+			if e = writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("UNRECONCILED", o, "GLM ranks stopped but shared owner identity did not match current pair")); e != nil {
+				return e
+			}
+			return errors.New("GLM ranks stopped but shared cluster ownership remains unreconciled")
+		}
 	}
 	return c.archivePoison()
 }
@@ -456,6 +495,15 @@ func (c *ClusterController) Verify(ctx context.Context) error {
 	return nil
 }
 func (c *ClusterController) start(ctx context.Context) (ret error) {
+	if c.Config.SharedStateDir != "" {
+		r, e := readSharedCompute(c.Config.SharedStateDir)
+		if e != nil {
+			return fmt.Errorf("shared cluster receipt unavailable; explicit reconciliation required: %w", e)
+		}
+		if e = sharedStartAllowed(r); e != nil {
+			return e
+		}
+	}
 	if o, e := c.readOwner(); e == nil && o.State != "stopped" {
 		return errors.New("previous owned pair must be explicitly stopped")
 	} else if e != nil && !os.IsNotExist(e) {
@@ -525,6 +573,11 @@ func (c *ClusterController) start(ctx context.Context) (ret error) {
 	if e := c.save(&o); e != nil {
 		return e
 	}
+	if c.Config.SharedStateDir != "" {
+		if e := writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("STARTING", o, "GLM whole-pair start reserved; no rank identity confirmed yet")); e != nil {
+			return e
+		}
+	}
 	defer func() {
 		if ret != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -532,14 +585,20 @@ func (c *ClusterController) start(ctx context.Context) (ret error) {
 			if e := c.stopUnits(cleanupCtx, o.Units, false); e != nil {
 				o.State = "cleanup_uncertain"
 				ret = errors.Join(ret, e)
+				if c.Config.SharedStateDir != "" {
+					_ = writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("UNRECONCILED", o, "GLM start failed and cleanup could not be fully verified: "+e.Error()))
+				}
 			} else {
 				o.State = "stopped"
+				if c.Config.SharedStateDir != "" {
+					_ = writeSharedCompute(c.Config.SharedStateDir, sharedOff("GLM start failed; all launched GLM ranks verified stopped"))
+				}
 			}
 			o.Error = ret.Error()
 			_ = c.save(&o)
 		}
 	}()
-	for _, rank := range []int{1, 0} {
+	for _, rank := range []int{0, 1} {
 		u := OwnedUnit{Rank: rank, Name: fmt.Sprintf("strixglm-rank%d", rank), Nonce: newNonce()}
 		o.Units = append(o.Units, u)
 		if e := c.save(&o); e != nil {
@@ -553,12 +612,25 @@ func (c *ClusterController) start(ctx context.Context) (ret error) {
 		if e := c.save(&o); e != nil {
 			return e
 		}
+		if c.Config.SharedStateDir != "" {
+			if e := writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("STARTING", o, fmt.Sprintf("GLM rank%d identity confirmed", rank))); e != nil {
+				return e
+			}
+		}
 	}
 	if e := c.waitHealth(ctx, c.Config.RankURLs, o.Units); e != nil {
 		return e
 	}
 	o.State = "ready"
-	return c.save(&o)
+	if e := c.save(&o); e != nil {
+		return e
+	}
+	if c.Config.SharedStateDir != "" {
+		if e := writeSharedCompute(c.Config.SharedStateDir, sharedFromGLM("RUNNING", o, "both GLM ranks healthy and identity-confirmed; coordinator/readiness pending")); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 func (c *ClusterController) launch(ctx context.Context, u *OwnedUnit, args []string, log, memory string, extra map[string]string) error {
 	// Reservation is written by caller before invoking this potentially ambiguous write.

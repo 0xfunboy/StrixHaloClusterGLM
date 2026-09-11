@@ -65,7 +65,7 @@ func clusterCLI(appCfg Config, args []string) error {
 			e = c.RestoreLegacy(ctx, args[1])
 		}
 	case "serve-pair":
-		return serveNativePair(c.Config, appCfg.ModelTimeout)
+		return serveNativePair(c.Config, appCfg.ModelTimeout, appCfg.LifecycleDrainSeconds)
 	default:
 		return errors.New("unknown cluster command")
 	}
@@ -77,7 +77,7 @@ func clusterCLI(appCfg Config, args []string) error {
 	}
 	return e
 }
-func serveNativePair(cfg ClusterConfig, requestTimeout int) error {
+func serveNativePair(cfg ClusterConfig, requestTimeout, drainSeconds int) error {
 	b, e := NewPairedBackend(PairedConfig{RankURLs: cfg.RankURLs, Model: "GLM5.3-Flash-CIRU-STRIX-IU4", StateDir: cfg.StateDir, TimeoutSeconds: requestTimeout})
 	if e != nil {
 		return e
@@ -89,7 +89,10 @@ func serveNativePair(cfg ClusterConfig, requestTimeout int) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{Addr: cfg.FrontendListen, Handler: b, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
-	return serveNativePairUntil(ctx, server, b, listener, time.Duration(b.Config.TimeoutSeconds+10)*time.Second)
+	if drainSeconds <= 0 {
+		drainSeconds = 30
+	}
+	return serveNativePairUntil(ctx, server, b, listener, time.Duration(drainSeconds)*time.Second)
 }
 
 func serveNativePairUntil(ctx context.Context, server *http.Server, backend *PairedBackend, listener net.Listener, grace time.Duration) error {

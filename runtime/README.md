@@ -38,13 +38,24 @@ frameworks, kernels or model weights is implied by this product.
 No build or privileged installation is performed automatically. Patch files are
 the five small local correctness fixes; rejected campaigns are not included.
 
-## Whole-pair ownership and rollback
+## Whole-pair ownership, ON/OFF and rollback
 
-Production startup is `haloclu-engine.service` → `strixglm-pair.service` →
-`strixglm.service`. Both hosts already have user lingering enabled. NODE01 waits
-for the USB4 peer using its dedicated SSH key, checks ownership, then starts or
-adopts the entire pair. A stale post-reboot owner is reconciled by the same
-all-rank controller. No rank has an independent restart policy.
+`strixglm.service` is the always-available HaloClu gateway/frontend. It does not
+require or auto-start inference. `haloclu-engine.service` and
+`strixglm-pair.service` are manual lifecycle components: the authenticated
+`/v1/model/lifecycle` API starts/stops the complete GLM pair and coordinator while
+the gateway remains available. Engine/coordinator units are deliberately not
+enabled in `default.target`; opening Chat or refreshing the frontend never loads
+the model. Both hosts retain user lingering for the gateway and transient rank
+units.
+
+NODE01 uses the ownership-aware all-rank controller over the private USB4 peer.
+A shared fixed control receipt under `/home/funboy/.local/state/strix-cluster`
+prevents DS41 and GLM from starting concurrently. The lifecycle mutation flock
+is not held by a model process: persistent owner/state/epoch plus rank nonce and
+InvocationID survive a crash and block new starts until both nodes are explicitly
+reconciled. `UNKNOWN` is never treated as OFF. No rank has an independent restart
+policy.
 
 The Go controller uses distinct `strixglm-rank{0,1}` unit names and rank port18110.
 It refuses to start while any old rank or frontend is active. A durable owner
@@ -66,6 +77,8 @@ before using those historical restore operations. Do not expose lifecycle comman
 unauthenticated HTTP endpoints. No automatic takeover/switch is performed.
 
 Native gateway/coordinator services are separate from the two owned rank units.
-Direct `cluster stop/start` CLI commands do not manage the HTTP services. For
-production maintenance, use `haloclu-engine.service`: its systemd dependencies
-drain and order the HTTP services around the whole pair; see OPERATIONS.md.
+Direct `cluster stop/start` CLI commands remain low-level controller operations;
+normal product use is the authenticated lifecycle API/UI. OFF first blocks new
+model admission, gives the coordinator the configured bounded drain window, then
+stops and verifies both owned rank cgroups. READY requires both ranks, coordinator
+health and a minimal paired readiness inference. See OPERATIONS.md.

@@ -1,8 +1,5 @@
 [Unit]
 Description=StrixHaloClusterGLM gateway, coding agent and frontend
-Requires=strixglm-pair.service
-After=strixglm-pair.service
-PartOf=haloclu-engine.service strixglm-pair.service
 
 [Service]
 Type=simple
