@@ -310,9 +310,20 @@ func (m *modelLifecycle) Snapshot(ctx context.Context) lifecycleSnapshot {
 	allEngineOff := true
 	allEngineReady := ownerErr == nil && owner.State == "ready"
 	anyUnknown := false
+	peerUnknown := false
 	for rank := 0; rank < 2; rank++ {
 		n := lifecycleNode{Rank: rank, Host: fmt.Sprintf("0%d-EVO-X3", rank+1), EngineState: presenceUnknown}
-		presence, raw, e := m.unitPresence(ctx, rank, fmt.Sprintf("strixglm-rank%d.service", rank))
+		var presence string
+		var raw map[string]string
+		var e error
+		if rank == 1 && peerUnknown {
+			presence, e = presenceUnknown, errors.New("NODE02 unavailable earlier in this lifecycle snapshot")
+		} else {
+			presence, raw, e = m.unitPresence(ctx, rank, fmt.Sprintf("strixglm-rank%d.service", rank))
+			if rank == 1 && e != nil {
+				peerUnknown = true
+			}
+		}
 		n.EngineState = presence
 		if raw != nil {
 			n.EnginePID, n.InvocationID = raw["MainPID"], raw["InvocationID"]
@@ -337,16 +348,24 @@ func (m *modelLifecycle) Snapshot(ctx context.Context) lifecycleSnapshot {
 		} else {
 			allEngineReady = false
 		}
-		if mem, swap, me := m.nodeMemory(ctx, rank); me == nil {
-			n.MemAvailableBytes, n.SwapFreeBytes = mem, swap
-		} else if n.Error == "" {
-			n.Error = me.Error()
+		if rank == 0 || !peerUnknown {
+			if mem, swap, me := m.nodeMemory(ctx, rank); me == nil {
+				n.MemAvailableBytes, n.SwapFreeBytes = mem, swap
+			} else if n.Error == "" {
+				n.Error = me.Error()
+				if rank == 1 {
+					peerUnknown = true
+				}
+			}
 		}
 		s.Nodes = append(s.Nodes, n)
 	}
 
 	ds0, e0 := m.ds41State(ctx, 0)
-	ds1, e1 := m.ds41State(ctx, 1)
+	ds1, e1 := presenceUnknown, errors.New("NODE02 unavailable earlier in this lifecycle snapshot")
+	if !peerUnknown {
+		ds1, e1 = m.ds41State(ctx, 1)
+	}
 	if e0 != nil || e1 != nil || ds0 == presenceUnknown || ds1 == presenceUnknown {
 		anyUnknown = true
 	}
