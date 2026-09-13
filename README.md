@@ -225,3 +225,7 @@ See [Contributing](CONTRIBUTING.md) for the development workflow.
 
 Original project code is public; its license is pending selection.
 [Third-party notices](THIRD_PARTY_NOTICES.md) cover external components.
+
+## Licensing
+
+Licensing scope and preserved third-party permissions are documented in [LICENSING.md](LICENSING.md). The [0xfunboy Non-Commercial License](LICENSE.md) covers eligible original material only.
