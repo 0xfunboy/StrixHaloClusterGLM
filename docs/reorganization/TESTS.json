@@ -1,0 +1,45 @@
+{
+  "at": "2026-09-24T19:21:32.176840+02:00",
+  "results": [
+    {
+      "repository": "StrixHaloClusterGLM",
+      "checks": {
+        "focused": 0,
+        "build": 0,
+        "vet": 0,
+        "core": 0
+      }
+    },
+    {
+      "repository": "StrixHaloClusterDS41",
+      "checks": {
+        "focused": 0,
+        "build": 0,
+        "vet": 0,
+        "core": 0
+      }
+    },
+    {
+      "repository": "StrixHaloMimo26",
+      "checks": {
+        "focused": 0,
+        "build": 0,
+        "vet": 0,
+        "core": 0
+      }
+    },
+    {
+      "repository": "StrixHaloQw38FN",
+      "checks": {
+        "focused": 0,
+        "build": 0,
+        "vet": 0,
+        "core": 0
+      }
+    }
+  ],
+  "node_tests_per_repository": 62,
+  "node_tests": "PASS in previous recorded checks",
+  "full_suite": "9 identical pre-existing bwrap-dependent failures on unmodified GLM and integrated core; no isolation weakened",
+  "new_model_requests": 0
+}

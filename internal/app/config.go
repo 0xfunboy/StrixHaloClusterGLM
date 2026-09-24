@@ -39,15 +39,19 @@ type Config struct {
 	SandboxMemoryBytes    int64              `json:"sandbox_memory_bytes"`
 	SandboxTasks          int                `json:"sandbox_tasks"`
 	RemoteSSH             string             `json:"remote_ssh"`
-	ClusterConfigPath     string             `json:"cluster_config_path,omitempty"`
-	ClusterSharedStateDir string             `json:"cluster_shared_state_dir,omitempty"`
-	LifecycleDrainSeconds int                `json:"lifecycle_drain_seconds,omitempty"`
 	TokenizerEndpoint     string             `json:"tokenizer_endpoint,omitempty"`
 	ChatContextTokens     int                `json:"chat_context_tokens,omitempty"`
 	ChatDefaultOutput     int                `json:"chat_default_output_tokens,omitempty"`
 	ChatMaxOutput         int                `json:"chat_max_output_tokens,omitempty"`
 	ThinkingBudget        bool               `json:"thinking_budget_supported,omitempty"`
 	ToolCalls             bool               `json:"tool_calls_supported,omitempty"`
+	ReasoningModes        []string           `json:"reasoning_modes,omitempty"`
+	LifecycleCommand      string             `json:"lifecycle_command,omitempty"`
+	LifecyclePreset       string             `json:"lifecycle_preset,omitempty"`
+	ClusterConfigPath     string             `json:"cluster_config_path,omitempty"`
+	ClusterSharedStateDir string             `json:"cluster_shared_state_dir,omitempty"`
+	LifecycleDrainSeconds int                `json:"lifecycle_drain_seconds,omitempty"`
+	InferenceEnabled      *bool              `json:"inference_enabled,omitempty"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -75,7 +79,26 @@ func loadConfig(path string) (Config, error) {
 	if c.ChatDefaultOutput > 0 && c.ChatMaxOutput > 0 && c.ChatDefaultOutput > c.ChatMaxOutput {
 		return c, errors.New("default output exceeds max output")
 	}
-	if c.ClusterConfigPath != "" {
+	if len(c.ReasoningModes) > 0 {
+		seen := map[string]bool{}
+		for _, mode := range c.ReasoningModes {
+			if mode != "none" && mode != "low" && mode != "medium" && mode != "high" && mode != "xhigh" && mode != "max" {
+				return c, errors.New("reasoning_modes contains unsupported value")
+			}
+			if seen[mode] {
+				return c, errors.New("reasoning_modes contains duplicate")
+			}
+			seen[mode] = true
+		}
+	}
+	if c.LifecycleCommand != "" && (!filepath.IsAbs(c.LifecycleCommand) || filepath.Clean(c.LifecycleCommand) != c.LifecycleCommand) {
+		return c, errors.New("lifecycle_command must be an absolute clean path")
+	}
+	if c.LifecycleCommand != "" && c.LifecyclePreset == "" {
+		return c, errors.New("lifecycle_preset required with lifecycle_command")
+	}
+	// Native pair management and an external owner-bound controller are separate drivers.
+	if c.ClusterConfigPath != "" && c.LifecycleCommand == "" {
 		if !filepath.IsAbs(c.ClusterConfigPath) || filepath.Clean(c.ClusterConfigPath) != c.ClusterConfigPath {
 			return c, errors.New("cluster_config_path must be an absolute clean path")
 		}

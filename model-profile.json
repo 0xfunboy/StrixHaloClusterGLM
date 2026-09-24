@@ -1,0 +1,14 @@
+{
+  "schema": "strix-model-profile-v1",
+  "model_id": "glm53-flash",
+  "serving_model_id": "GLM5.3-Flash-CIRU-STRIX-IU4",
+  "repository": "StrixHaloClusterGLM",
+  "gateway_config": "config.json",
+  "engine_reference": "runtime/cluster.json",
+  "resource_group": "strix-pair",
+  "automatic_switching": false,
+  "frontend_qualified": true,
+  "qualification_scope": "existing GLM lifecycle; no new engine qualification",
+  "deployment_in_this_change": false,
+  "common_core_live_qualification": "NOT_RUN_SOURCE_ONLY"
+}

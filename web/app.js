@@ -331,7 +331,7 @@ function nodeCard(node, index) {
 function renderLifecycle(value) {
   const view = lifecycleControlState(value, state.lifecycleBusy);
   setBadge($('lifecycle-state'), view.state);
-  $('lifecycle-detail').textContent = view.detail || (view.state === 'OFF' ? 'GLM inference is unloaded.' : 'Lifecycle status reported by the server.');
+  $('lifecycle-detail').textContent = view.detail || (view.state === 'OFF' ? 'Model inference is unloaded.' : 'Lifecycle status reported by the server.');
   $('lifecycle-owner').textContent = view.owner;
   $('lifecycle-coordinator').textContent = view.coordinator;
   $('lifecycle-readiness').textContent = view.readiness;
@@ -358,14 +358,15 @@ function renderLifecycle(value) {
 }
 
 async function lifecycleAction(action) {
-  if (state.lifecycleBusy) return;
+  if (state.lifecycleBusy || !state.authenticated) return;
+  if (!confirm(`Confirm model ${action.toUpperCase()} through its owner-bound controller?`)) return;
   state.lifecycleBusy = true;
   $('lifecycle-on').disabled = true;
   $('lifecycle-off').disabled = true;
   try {
-    const snapshot = await request(`/v1/model/lifecycle/${action}`, { method: 'POST', timeout: 15000 });
+    const snapshot = await request(`/v1/model/lifecycle/${action}`, { method: 'POST', body: { confirm: true }, timeout: 15000 });
     renderLifecycle(snapshot);
-    notice(action === 'on' ? 'GLM start accepted. Status will update from the server.' : 'GLM stop accepted. New inference is blocked while the pair drains.', 'neutral');
+    notice(action === 'on' ? 'Model start accepted. Status will update from the server.' : 'Model stop accepted. New inference is blocked while the pair drains.', 'neutral');
     await refreshHealth(false);
   } catch (error) {
     notice(error.message, 'bad');
@@ -414,14 +415,14 @@ async function refreshHealth(interactive = false) {
     renderHealth(health, status);
     const healthState = healthStatus(status?.health, healthStatus(health));
     const lifecycle = lifecycleControlState(status?.lifecycle || null);
-    const expectedOffline = ['OFF', 'STARTING', 'STOPPING'].includes(lifecycle.state);
+    const expectedOffline = ['OFF', 'STARTING', 'STOPPING', 'RESEARCH_BUSY'].includes(lifecycle.state);
     const bad = lifecycle.state === 'ERROR' || (!expectedOffline && classifyStatus(healthState) === 'bad');
-    $('connection-label').textContent = lifecycle.state === 'OFF' ? "Local API connected · GLM OFF"
-      : lifecycle.state === 'STARTING' ? "Local API connected · GLM STARTING"
-      : lifecycle.state === 'STOPPING' ? "Local API connected · GLM STOPPING"
+    $('connection-label').textContent = lifecycle.state === 'OFF' ? "Local API connected · model OFF"
+      : lifecycle.state === 'STARTING' ? "Local API connected · model STARTING"
+      : lifecycle.state === 'STOPPING' ? "Local API connected · model STOPPING"
       : bad ? "Engine needs attention" : "Local API connected";
     $('connection-dot').className = `status-dot ${bad ? 'bad' : 'good'}`;
-    $('connection-result').textContent = lifecycle.state === 'OFF' ? "Authenticated. The frontend is available and GLM inference is unloaded."
+    $('connection-result').textContent = lifecycle.state === 'OFF' ? "Authenticated. The frontend is available and Model inference is unloaded."
       : bad ? "API reachable; check cluster lifecycle before generating."
       : "Authenticated: chat and workspace controls are available.";
     if (restoredAuthentication && state.activeTab === 'models') refreshModels();

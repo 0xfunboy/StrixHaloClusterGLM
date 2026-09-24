@@ -234,10 +234,11 @@ export function activeRequestLabel(value, busy) {
 
 export function lifecycleControlState(value, busy = false) {
   const state = String(value?.state || 'ERROR').toUpperCase();
-  const owner = String(value?.cluster_owner || 'UNKNOWN').toUpperCase();
+  const owner = String(value?.cluster_owner || value?.owner || 'UNKNOWN').toUpperCase();
   const coordinator = String(value?.coordinator || 'OFF').toUpperCase();
   const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
-  const active = coordinator === 'RUNNING' || nodes.some(node => String(node?.engine_state || '').toUpperCase() === 'ACTIVE');
+  const active = state === 'READY' || coordinator === 'RUNNING' || nodes.some(node => String(node?.engine_state || '').toUpperCase() === 'ACTIVE');
+  const startAllowed = value?.start_allowed === true || (value?.managed === true && state === 'OFF' && owner === 'NONE' && !('start_allowed' in value));
   const transitional = state === 'STARTING' || state === 'STOPPING';
   return {
     state,
@@ -248,7 +249,7 @@ export function lifecycleControlState(value, busy = false) {
     drainSeconds: finite(value?.drain_deadline_seconds),
     nodes,
     poll: transitional,
-    onDisabled: Boolean(busy || transitional || state === 'READY' || value?.start_allowed !== true),
+    onDisabled: Boolean(busy || transitional || state === 'READY' || !startAllowed),
     offDisabled: Boolean(busy || transitional || !active),
   };
 }

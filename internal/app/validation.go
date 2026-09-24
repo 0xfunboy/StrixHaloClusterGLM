@@ -12,6 +12,9 @@ func validateChat(p map[string]any) error {
 	return validateChatWithTools(p, false)
 }
 func validateChatWithTools(p map[string]any, toolsEnabled bool) error {
+	return validateChatWithReasoning(p, toolsEnabled, supportedReasoning)
+}
+func validateChatWithReasoning(p map[string]any, toolsEnabled bool, reasoningOK func(string) bool) error {
 	if p == nil {
 		return errors.New("chat body must be an object")
 	}
@@ -109,13 +112,13 @@ func validateChatWithTools(p map[string]any, toolsEnabled bool) error {
 			return errors.New("chat_template_kwargs must be object")
 		}
 		if r, ok := k["reasoning_effort"]; ok {
-			if !supportedReasoning(stringValue(r)) {
+			if !reasoningOK(stringValue(r)) {
 				return errors.New("unknown reasoning effort")
 			}
 		}
 	}
-	if r, ok := p["reasoning_effort"]; ok && !supportedReasoning(stringValue(r)) {
-		return errors.New("reasoning_effort must be low/high/max")
+	if r, ok := p["reasoning_effort"]; ok && !reasoningOK(stringValue(r)) {
+		return errors.New("reasoning_effort is not advertised by this model profile")
 	}
 	if p["stream_options"] != nil && object(p["stream_options"]) == nil {
 		return errors.New("stream_options must be object")

@@ -419,3 +419,32 @@ func TestOneShotHealthClosesItsIdleConnection(t *testing.T) {
 		t.Fatal("one-shot health transport leaked an idle connection")
 	}
 }
+
+func TestMergePairedPrefillMetricsUsesCriticalRank(t *testing.T) {
+	a := []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"metrics":{"prefill_engine_ms":120.5,"prompt_tokens_computed":2048,"prompt_tokens_cached":0}}`)
+	b := []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"metrics":{"prefill_engine_ms":125.25,"prompt_tokens_computed":2048,"prompt_tokens_cached":0}}`)
+	out, err := mergePairedTimingMetrics(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v map[string]any
+	if json.Unmarshal(out, &v) != nil {
+		t.Fatal("bad json")
+	}
+	m := v["metrics"].(map[string]any)
+	if m["pair_prefill_engine_ms_max"] != 125.25 || m["pair_prefill_scope"] != "max_rank" {
+		t.Fatalf("bad merge %#v", m)
+	}
+}
+
+func TestMergePairedSSETerminalPrefillMetrics(t *testing.T) {
+	a := []byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"metrics\":{\"prefill_engine_ms\":100,\"prompt_tokens_computed\":4096,\"prompt_tokens_cached\":0}}\n\ndata: [DONE]\n\n")
+	b := []byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"metrics\":{\"prefill_engine_ms\":108,\"prompt_tokens_computed\":4096,\"prompt_tokens_cached\":0}}\n\ndata: [DONE]\n\n")
+	out, err := mergePairedSSETerminalMetrics(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"pair_prefill_engine_ms_max":108`) || !strings.Contains(string(out), `data: [DONE]`) {
+		t.Fatalf("bad terminal merge %s", out)
+	}
+}

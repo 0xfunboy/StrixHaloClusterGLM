@@ -394,9 +394,29 @@ func (j *pairedJob) run() {
 			j.backend.fail(j.err.Error())
 		}
 		if j.err == nil {
-			j.body0 = rs[0].body
-			if len(rs[0].terminal) > 0 {
-				j.emit(rs[0].terminal)
+			if !j.stream {
+				merged, e := mergePairedTimingMetrics(rs[0].body, rs[1].body)
+				if e != nil {
+					j.err = e
+				} else {
+					j.body0 = merged
+				}
+			} else {
+				j.body0 = rs[0].body
+			}
+			if j.err == nil && len(rs[0].terminal) > 0 {
+				terminal := rs[0].terminal
+				if j.stream && len(rs[1].terminal) > 0 {
+					merged, e := mergePairedSSETerminalMetrics(rs[0].terminal, rs[1].terminal)
+					if e != nil {
+						j.err = e
+					} else {
+						terminal = merged
+					}
+				}
+				if j.err == nil {
+					j.emit(terminal)
+				}
 			}
 		}
 	}
@@ -493,13 +513,11 @@ func (j *pairedJob) drain(ctx context.Context, rank int) (out pairedRankResult) 
 					out.err = e
 					return
 				}
-				if rank == 0 {
-					holding = holding || terminal
-					if holding {
-						out.terminal = append(out.terminal, raw...)
-					} else {
-						j.emit(raw)
-					}
+				holding = holding || terminal
+				if holding {
+					out.terminal = append(out.terminal, raw...)
+				} else if rank == 0 {
+					j.emit(raw)
 				}
 			}
 		}
@@ -517,6 +535,109 @@ func (j *pairedJob) drain(ctx context.Context, rank int) (out pairedRankResult) 
 	}
 	out.output, out.err = semantic.finish()
 	return
+}
+
+func mergeMetricMaps(ma, mb map[string]any) error {
+	for _, key := range []string{"prompt_tokens_computed", "prompt_tokens_cached", "prompt_tokens_local_cache", "prompt_tokens_external_cache", "prompt_tokens_cache_creation"} {
+		if ma[key] != nil && mb[key] != nil && !reflect.DeepEqual(ma[key], mb[key]) {
+			return fmt.Errorf("rank prefill accounting differs for %s", key)
+		}
+	}
+	fa, oka := pairedFloat(ma["prefill_engine_ms"])
+	fb, okb := pairedFloat(mb["prefill_engine_ms"])
+	if oka && okb {
+		if fb > fa {
+			fa = fb
+		}
+		ma["pair_prefill_engine_ms_max"] = fa
+		ma["pair_prefill_scope"] = "max_rank"
+	}
+	return nil
+}
+func mergePairedTimingMetrics(a, b []byte) ([]byte, error) {
+	va, e := pairedObject(a)
+	if e != nil {
+		return nil, e
+	}
+	vb, e := pairedObject(b)
+	if e != nil {
+		return nil, e
+	}
+	ma, _ := va["metrics"].(map[string]any)
+	mb, _ := vb["metrics"].(map[string]any)
+	if ma == nil || mb == nil {
+		return a, nil
+	}
+	if e = mergeMetricMaps(ma, mb); e != nil {
+		return nil, e
+	}
+	return json.Marshal(va)
+}
+func sseFrameData(frame string) string {
+	var data []string
+	for _, line := range strings.Split(strings.ReplaceAll(frame, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(line, "data:") {
+			data = append(data, strings.TrimSpace(line[5:]))
+		}
+	}
+	return strings.Join(data, "\n")
+}
+func terminalMetrics(blob []byte) map[string]any {
+	for _, frame := range strings.Split(string(blob), "\n\n") {
+		data := sseFrameData(frame)
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		v, e := pairedObject([]byte(data))
+		if e != nil {
+			continue
+		}
+		if m, ok := v["metrics"].(map[string]any); ok {
+			return m
+		}
+	}
+	return nil
+}
+func mergePairedSSETerminalMetrics(a, b []byte) ([]byte, error) {
+	mb := terminalMetrics(b)
+	if mb == nil {
+		return a, nil
+	}
+	frames := strings.Split(string(a), "\n\n")
+	for i, frame := range frames {
+		data := sseFrameData(frame)
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		v, e := pairedObject([]byte(data))
+		if e != nil {
+			continue
+		}
+		ma, ok := v["metrics"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if e = mergeMetricMaps(ma, mb); e != nil {
+			return nil, e
+		}
+		enc, e := json.Marshal(v)
+		if e != nil {
+			return nil, e
+		}
+		frames[i] = "data: " + string(enc)
+		return []byte(strings.Join(frames, "\n\n")), nil
+	}
+	return a, nil
+}
+func pairedFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		f, e := strconv.ParseFloat(string(n), 64)
+		return f, e == nil
+	case float64:
+		return n, true
+	}
+	return 0, false
 }
 
 func pairedObject(b []byte) (map[string]any, error) {

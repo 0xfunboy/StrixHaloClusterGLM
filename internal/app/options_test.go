@@ -175,3 +175,28 @@ func TestStreamingProgressUsesReportedCounts(t *testing.T) {
 		t.Fatalf("invented token count: %v", counts)
 	}
 }
+
+func TestDS41ReasoningNoneIsDeploymentScoped(t *testing.T) {
+	glm, _ := newApp(coreConfig(t))
+	p := chatFixture()
+	p["reasoning_effort"] = "none"
+	if _, err := glm.prepareChat(p); err == nil {
+		t.Fatal("default GLM-compatible config accepted none")
+	}
+
+	cfg := coreConfig(t)
+	cfg.ReasoningModes = []string{"none", "low", "high", "max"}
+	ds, _ := newApp(cfg)
+	p = chatFixture()
+	p["reasoning_effort"] = "none"
+	if err := validateChatWithReasoning(p, false, ds.supportsReasoning); err != nil {
+		t.Fatal(err)
+	}
+	s, err := ds.prepareChat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Reasoning != "none" || object(p["chat_template_kwargs"])["reasoning_effort"] != "none" {
+		t.Fatalf("none not preserved: %+v %#v", s, p)
+	}
+}

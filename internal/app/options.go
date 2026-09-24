@@ -21,6 +21,20 @@ const defaultChatOutput = 16384
 var errTokenizerPreflight = errors.New("tokenizer preflight unavailable; no inference dispatched")
 
 func supportedReasoning(s string) bool { return s == "low" || s == "high" || s == "max" }
+func (a *App) reasoningModes() []string {
+	if len(a.cfg.ReasoningModes) == 0 {
+		return []string{"low", "high", "max"}
+	}
+	return append([]string(nil), a.cfg.ReasoningModes...)
+}
+func (a *App) supportsReasoning(s string) bool {
+	for _, mode := range a.reasoningModes() {
+		if s == mode {
+			return true
+		}
+	}
+	return false
+}
 func (a *App) maxOutputTokens() int {
 	if a.cfg.ChatMaxOutput > 0 {
 		return a.cfg.ChatMaxOutput
@@ -51,16 +65,16 @@ func (a *App) registerOptionsRoutes(mux *http.ServeMux) {
 			note = "Text and function tools through a paired raw-token adapter; tool turns are buffered until agreement. Responses/multimodal are not supported."
 		}
 		jsonReply(w, 200, map[string]any{
-			"reasoning_modes": []string{"low", "high", "max"}, "default_reasoning": profile.Reasoning,
+			"reasoning_modes": a.reasoningModes(), "default_reasoning": profile.Reasoning,
 			"context_options":        []int{4096, 8192, 16384, 32768, 65536},
 			"default_context_tokens": a.chatContextTokens(), "engine_context_tokens": safeEngineContext,
 			"default_max_tokens": a.defaultOutputTokens(), "max_output_tokens": a.maxOutputTokens(),
-			"thinking_budget_supported": a.cfg.ThinkingBudget, "thinking_off_supported": false,
+			"thinking_budget_supported": a.cfg.ThinkingBudget, "thinking_off_supported": a.supportsReasoning("none"),
 			"generation_timeout_seconds": a.cfg.ModelTimeout,
 			"context_semantics":          "Input plus output admission window; does not resize the engine KV cache or restart ranks.",
 			"output_semantics":           "Maximum total output includes reasoning and final answer. Auto fits the remaining window; EOS may end sooner.",
 			"quality_note":               "Compact C++ fixtures qualified. Largest passing context integration:2575 actual prompt tokens. Longer context is available, not quality-qualified.",
-			"thinking_note":              "low/high/max are template controls, not quality guarantees. Hiding reasoning does not disable computation. medium/none are not independent supported modes.",
+			"thinking_note":              "Advertised modes are profile-specific template controls, not quality guarantees. Hiding reasoning does not disable computation. Only this deployment's explicit modes are accepted.",
 			"tools_supported":            a.cfg.ToolCalls, "client_note": note,
 			"attachment_max_bytes": attachmentMaxFile, "attachment_kinds": []string{"text", "pdf-text", "docx-text", "archive-listing", "binary-inspection"},
 		})
@@ -119,8 +133,8 @@ func (a *App) prepareChat(p map[string]any) (chatSettings, error) {
 	if top != "" {
 		s.Reasoning = top
 	}
-	if !supportedReasoning(s.Reasoning) {
-		return s, errors.New("GLM supports low/high/max; low is not thinking off, and medium/none must not silently become max")
+	if !a.supportsReasoning(s.Reasoning) {
+		return s, fmt.Errorf("unsupported reasoning_effort %q for this deployment", s.Reasoning)
 	}
 	for key, value := range kwargs {
 		switch key {

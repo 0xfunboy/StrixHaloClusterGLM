@@ -25,7 +25,11 @@ func clusterCLI(appCfg Config, args []string) error {
 		return errors.New("cluster status|verify|start|stop|restart|snapshot-legacy PATH|stop-legacy PATH|recover-legacy PATH|restore-legacy PATH|serve-pair")
 	}
 	var cfg ClusterConfig
-	b, e := os.ReadFile("runtime/cluster.json")
+	clusterPath := appCfg.ClusterConfigPath
+	if clusterPath == "" {
+		clusterPath = "runtime/cluster.json"
+	}
+	b, e := os.ReadFile(clusterPath)
 	if e != nil {
 		return e
 	}
@@ -65,7 +69,7 @@ func clusterCLI(appCfg Config, args []string) error {
 			e = c.RestoreLegacy(ctx, args[1])
 		}
 	case "serve-pair":
-		return serveNativePair(c.Config, appCfg.ModelTimeout, appCfg.LifecycleDrainSeconds)
+		return serveNativePair(c.Config, appCfg.Model, appCfg.ModelTimeout, appCfg.LifecycleDrainSeconds)
 	default:
 		return errors.New("unknown cluster command")
 	}
@@ -77,8 +81,8 @@ func clusterCLI(appCfg Config, args []string) error {
 	}
 	return e
 }
-func serveNativePair(cfg ClusterConfig, requestTimeout, drainSeconds int) error {
-	b, e := NewPairedBackend(PairedConfig{RankURLs: cfg.RankURLs, Model: "GLM5.3-Flash-CIRU-STRIX-IU4", StateDir: cfg.StateDir, TimeoutSeconds: requestTimeout})
+func serveNativePair(cfg ClusterConfig, model string, requestTimeout, drainSeconds int) error {
+	b, e := NewPairedBackend(PairedConfig{RankURLs: cfg.RankURLs, Model: model, StateDir: cfg.StateDir, TimeoutSeconds: requestTimeout})
 	if e != nil {
 		return e
 	}
